@@ -1,0 +1,113 @@
+/* stylesheet.css — styling for the clipboard history panel
+ *
+ * SPDX-FileCopyrightText: 2025 Manouchehr Ghalevand
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Uses the restricted CSS dialect implemented by St, the GNOME Shell styling
+ * engine, so only a subset of standard CSS properties is available here. */
+
+/* Fixed width for the whole panel. Without it, a long copied string (up to
+ * MAX_PREVIEW_CHARS in extension.js) would stretch the menu to its full
+ * length, because nothing else constrains the natural width of the labels
+ * and ellipsizing only kicks in once a width limit exists. */
+.clipboard-history-search {
+    width: 380px;
+    margin: 6px 10px 8px 10px;
+}
+
+/* Maximum height of the scrollable list; past this height a scrollbar
+ * appears. The width is pinned here as well so that the whole panel — tabs,
+ * search box, list and action buttons — stays a consistent width. It was
+ * widened slightly when the Kaomoji and Symbols tabs were added, so that all
+ * five tabs fit on one row. */
+.clipboard-history-scrollview {
+    width: 400px;
+    max-height: 420px;
+}
+
+.clipboard-history-item {
+    spacing: 8px;
+    padding: 6px 10px;
+}
+
+.clipboard-history-thumbnail {
+    border-radius: 4px;
+    border: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.clipboard-history-icon-button {
+    padding: 4px;
+    border-radius: 6px;
+}
+
+.clipboard-history-icon-button:hover {
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+/* The pinned state (toggle_mode + checked) is indicated in yellow. */
+.clipboard-history-icon-button:checked {
+    color: #f5c211;
+}
+
+.clipboard-history-empty-label {
+    padding: 28px 12px;
+    opacity: 0.6;
+}
+
+/* Tab bar for Text / Images / Emoji / Kaomoji / Symbols. Five tabs have to
+ * share one row, so the spacing and font size are a little tighter than
+ * usual to keep them all within the panel width. */
+.clipboard-history-tabbar {
+    spacing: 2px;
+    margin: 8px 8px 4px 8px;
+}
+
+.clipboard-history-tab {
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 0.8em;
+}
+
+.clipboard-history-tab:checked {
+    background-color: rgba(53, 132, 228, 0.35);
+    font-weight: bold;
+}
+
+.clipboard-history-tab:hover {
+    background-color: rgba(128, 128, 128, 0.15);
+}
+
+/* Emoji page */
+.clipboard-history-category-label {
+    font-weight: bold;
+    opacity: 0.75;
+    padding: 8px 12px 2px 12px;
+}
+
+.clipboard-history-emoji-row {
+    spacing: 2px;
+    padding: 1px 8px;
+}
+
+.clipboard-history-emoji-button {
+    font-size: 20px;
+    padding: 3px;
+    border-radius: 6px;
+    min-width: 32px;
+}
+
+.clipboard-history-emoji-button:hover {
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+/* Kaomoji page: the buttons are sized to their content rather than laid out
+ * on a uniform grid, because the strings themselves vary widely in length. */
+.clipboard-history-kaomoji-button {
+    font-size: 13px;
+    padding: 5px 8px;
+    border-radius: 6px;
+}
+
+.clipboard-history-kaomoji-button:hover {
+    background-color: rgba(128, 128, 128, 0.2);
+}

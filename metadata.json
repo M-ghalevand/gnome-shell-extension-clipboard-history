@@ -1,0 +1,9 @@
+{
+    "uuid": "clipboard-history@manouchehr",
+    "name": "Clipboard History (Super+V)",
+    "description": "A Windows-style clipboard history panel for GNOME Shell, opened with Super+V.\n\nFeatures:\n• Keeps a scrollable history of everything you copy — text, links, and images\n• Image entries show inline thumbnail previews\n• Pin frequently used entries so they are never evicted from history\n• Search across the whole history as you type\n• Auto-paste: pick an entry and it is inserted straight into the focused application\n• Emoji, Kaomoji, and Symbols tabs for inserting characters that are awkward to type\n• Full RTL support — Persian and Arabic text renders and aligns correctly\n• Configurable history size, and a one-click Clear History action\n\nThe history is stored under ~/.cache/clipboard-history@manouchehr/ and survives logout. Clipboard content marked as sensitive by password managers is never recorded.",
+    "shell-version": ["46", "47", "48", "49", "50"],
+    "url": "https://github.com/M-ghalevand/gnome-shell-extension-clipboard-history",
+    "settings-schema": "org.gnome.shell.extensions.clipboard-history",
+    "version-name": "1.0"
+}
