@@ -14,9 +14,13 @@
     <!-- Shortcut that opens and closes the clipboard history panel. It is an
          array because Main.wm.addKeybinding expects a GVariant of type 'as'
          (an array of accelerator strings), exactly like the built-in
-         gnome-shell keybindings. -->
+         gnome-shell keybindings.
+
+         The default is deliberately empty: extensions.gnome.org forbids
+         shipping a default keyboard shortcut for interacting with clipboard
+         data, so the user assigns one in the preferences. -->
     <key name="toggle-shortcut" type="as">
-      <default>["&lt;Super&gt;v"]</default>
+      <default>[]</default>
       <summary>Toggle the clipboard history popup</summary>
       <description>
         Keybinding used to open and close the clipboard history panel.
@@ -43,19 +47,6 @@
       <description>
         When enabled, copied images are saved as PNG thumbnails and shown
         with an image preview in the history panel.
-      </description>
-    </key>
-
-    <!-- Internal, private key: the original value of the core gnome-shell
-         toggle-message-tray binding is stashed here before the extension
-         takes Super+V away from it, so that disabling the extension can
-         restore it exactly. Users should not normally edit this by hand. -->
-    <key name="saved-message-tray-shortcuts" type="as">
-      <default>[]</default>
-      <summary>Internal: original toggle-message-tray value</summary>
-      <description>
-        Used internally to restore the system "toggle-message-tray"
-        keybinding when the extension is disabled.
       </description>
     </key>
 

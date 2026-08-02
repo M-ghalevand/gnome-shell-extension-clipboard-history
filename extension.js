@@ -11,8 +11,7 @@
  *   HistoryStore              In-memory history plus async persistence to disk
  *   HistoryItem               A single popup menu row (text or image)
  *   ClipboardHistoryIndicator Panel button and menu (list, search, pin, delete)
- *   Extension (default)       enable()/disable(), keybinding management and
- *                             reclaiming Super+V from the message tray
+ *   Extension (default)       enable()/disable(), keybinding and paste handling
  *
  * One architectural constraint drives much of the code below: GJS is single
  * threaded and shares that thread with the whole Mutter compositor. No
@@ -259,33 +258,28 @@ class ClipboardWatcher extends Signals.EventEmitter {
     }
 
     _readClipboard() {
-        try {
-            const mimeTypes = this._clipboard.get_mimetypes(St.ClipboardType.CLIPBOARD);
-            if (!mimeTypes || mimeTypes.length === 0)
-                return;
+        const mimeTypes = this._clipboard.get_mimetypes(St.ClipboardType.CLIPBOARD);
+        if (mimeTypes.length === 0)
+            return;
 
-            if (SENSITIVE_MIME_TYPES.some(m => mimeTypes.includes(m)))
-                return; // Sensitive content, e.g. from a password manager: do not store
+        if (SENSITIVE_MIME_TYPES.some(m => mimeTypes.includes(m)))
+            return; // Sensitive content, e.g. from a password manager: do not store
 
-            if (this.enableImages) {
-                const imageMime = IMAGE_MIME_TYPES.find(m => mimeTypes.includes(m));
-                if (imageMime) {
-                    this._clipboard.get_content(St.ClipboardType.CLIPBOARD, imageMime, (clipboard, bytes) => {
-                        if (!bytes || (bytes.get_size && bytes.get_size() === 0))
-                            return;
+        if (this.enableImages) {
+            const imageMime = IMAGE_MIME_TYPES.find(m => mimeTypes.includes(m));
+            if (imageMime) {
+                this._clipboard.get_content(St.ClipboardType.CLIPBOARD, imageMime, (clipboard, bytes) => {
+                    if (bytes && bytes.get_size() > 0)
                         this.emit('image-copied', bytes, imageMime);
-                    });
-                    return;
-                }
+                });
+                return;
             }
-
-            this._clipboard.get_text(St.ClipboardType.CLIPBOARD, (clipboard, text) => {
-                if (text && text.length > 0)
-                    this.emit('text-copied', text);
-            });
-        } catch (e) {
-            console.warn(`Clipboard History: failed to read the clipboard: ${e.message}`);
         }
+
+        this._clipboard.get_text(St.ClipboardType.CLIPBOARD, (clipboard, text) => {
+            if (text && text.length > 0)
+                this.emit('text-copied', text);
+        });
     }
 
     destroy() {
@@ -317,13 +311,13 @@ class HistoryStore {
     }
 
     _ensureDirs() {
-        for (const dir of [this._cacheDir, this._imagesDir]) {
-            try {
-                Gio.File.new_for_path(dir).make_directory_with_parents(null);
-            } catch (e) {
-                if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS))
-                    console.warn(`Clipboard History: could not create directory ${dir}: ${e.message}`);
-            }
+        // The images directory is inside the cache directory, so creating it
+        // with parents creates both.
+        try {
+            Gio.File.new_for_path(this._imagesDir).make_directory_with_parents(null);
+        } catch (e) {
+            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS))
+                console.error(`Clipboard History: could not create ${this._imagesDir}: ${e.message}`);
         }
     }
 
@@ -331,14 +325,10 @@ class HistoryStore {
         const file = Gio.File.new_for_path(this._indexPath);
         file.load_contents_async(null, (source, res) => {
             try {
-                const result = source.load_contents_finish(res);
-                // Some GJS versions return [ok, contents, etag] here and
-                // others return [contents, etag]; both are handled.
-                const contents = typeof result[0] === 'boolean' ? result[1] : result[0];
-                const text = new TextDecoder().decode(contents);
-                const entries = JSON.parse(text);
+                const [, contents] = source.load_contents_finish(res);
+                const entries = JSON.parse(new TextDecoder().decode(contents));
                 callback(Array.isArray(entries) ? entries : []);
-            } catch (e) {
+            } catch {
                 callback([]); // First run, or a missing or corrupt file
             }
         });
@@ -353,7 +343,7 @@ class HistoryStore {
                 try {
                     source.replace_contents_finish(res);
                 } catch (e) {
-                    console.warn(`Clipboard History: could not save the history: ${e.message}`);
+                    console.error(`Clipboard History: could not save the history: ${e.message}`);
                 }
             });
     }
@@ -367,7 +357,7 @@ class HistoryStore {
                     source.replace_contents_finish(res);
                     callback(path);
                 } catch (e) {
-                    console.warn(`Clipboard History: could not save the image: ${e.message}`);
+                    console.error(`Clipboard History: could not save the image: ${e.message}`);
                     callback(null);
                 }
             });
@@ -377,10 +367,10 @@ class HistoryStore {
         const file = Gio.File.new_for_path(entry.imagePath);
         file.load_bytes_async(null, (source, res) => {
             try {
-                const result = source.load_bytes_finish(res);
-                const bytes = Array.isArray(result) ? result[0] : result;
+                const [bytes] = source.load_bytes_finish(res);
                 callback(bytes);
             } catch (e) {
+                console.error(`Clipboard History: could not read ${entry.imagePath}: ${e.message}`);
                 callback(null);
             }
         });
@@ -392,7 +382,8 @@ class HistoryStore {
             try {
                 source.delete_finish(res);
             } catch (e) {
-                // The file may already be gone, which is of no consequence.
+                if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+                    console.error(`Clipboard History: could not delete ${path}: ${e.message}`);
             }
         });
     }
@@ -414,7 +405,8 @@ const HistoryItem = GObject.registerClass({
             can_focus: true,
         });
 
-        // entry: {id, type:'text'|'image', text?, imagePath?, width?, height?, pinned, timestamp}
+        // entry: {id, type:'text'|'image', text?, imagePath?, mimeType?, width?,
+        //         height?, pinned, timestamp}
         this.entry = entry;
 
         this._buildContent();
@@ -637,20 +629,20 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
                 text: category.name,
                 style_class: 'clipboard-history-category-label',
             }));
-            container.add_child(this._buildGlyphGrid(category.emojis, perRow, 'clipboard-history-emoji-button'));
+            container.add_child(this._buildGlyphGrid(category.emojis, perRow));
         }
 
         return container;
     }
 
-    _buildGlyphGrid(glyphs, perRow, styleClass) {
+    _buildGlyphGrid(glyphs, perRow) {
         const grid = new St.BoxLayout({vertical: true});
         for (let i = 0; i < glyphs.length; i += perRow) {
             const row = new St.BoxLayout({style_class: 'clipboard-history-emoji-row'});
             for (const glyph of glyphs.slice(i, i + perRow)) {
                 const button = new St.Button({
                     label: glyph,
-                    style_class: styleClass,
+                    style_class: 'clipboard-history-emoji-button',
                     can_focus: true,
                     x_expand: true,
                 });
@@ -738,8 +730,10 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
     // -------------------- Wiring up ClipboardWatcher --------------------
 
     _connectWatcher() {
-        this._watcher.connect('text-copied', (watcher, text) => this._onTextCopied(text));
-        this._watcher.connect('image-copied', (watcher, bytes, mimeType) => this._onImageCopied(bytes, mimeType));
+        this._watcherIds = [
+            this._watcher.connect('text-copied', (watcher, text) => this._onTextCopied(text)),
+            this._watcher.connect('image-copied', (watcher, bytes, mimeType) => this._onImageCopied(bytes, mimeType)),
+        ];
     }
 
     _onTextCopied(text) {
@@ -770,6 +764,7 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
                 id,
                 type: 'image',
                 imagePath,
+                mimeType,
                 pinned: false,
                 timestamp: Date.now(),
             });
@@ -785,25 +780,23 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
      * memory rather than from disk, so that a more informative caption such
      * as "Image 640×480" can be shown. */
     _readImageDimensions(bytes, id) {
-        try {
-            const stream = Gio.MemoryInputStream.new_from_bytes(bytes);
-            GdkPixbuf.Pixbuf.new_from_stream_async(stream, null, (source, res) => {
-                try {
-                    const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_finish(res);
-                    const entry = this._entries.find(e => e.id === id);
-                    if (entry) {
-                        entry.width = pixbuf.get_width();
-                        entry.height = pixbuf.get_height();
-                        this._persist();
-                        this._rebuildList();
-                    }
-                } catch (e) {
-                    // Decoding failed; the simpler caption is still shown.
+        const stream = Gio.MemoryInputStream.new_from_bytes(bytes);
+        GdkPixbuf.Pixbuf.new_from_stream_async(stream, null, (source, res) => {
+            try {
+                const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_finish(res);
+                const entry = this._entries.find(e => e.id === id);
+                if (entry) {
+                    entry.width = pixbuf.get_width();
+                    entry.height = pixbuf.get_height();
+                    this._persist();
+                    this._rebuildList();
                 }
-            });
-        } catch (e) {
-            // Ignored: this is a cosmetic enhancement only.
-        }
+            } catch (e) {
+                // The row keeps its generic caption, but content the clipboard
+                // advertised as an image failing to decode is worth knowing.
+                console.error(`Clipboard History: could not decode the copied image: ${e.message}`);
+            }
+        });
     }
 
     // -------------------- History operations --------------------
@@ -813,8 +806,11 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
 
         if (entry.type === 'image') {
             this._store.readImageBytes(entry, bytes => {
+                // The bytes are whatever the source application offered, so they
+                // must go back out under that same type. Entries written before
+                // mimeType was recorded predate any non-PNG capture path.
                 if (bytes)
-                    this._watcher.setImage(bytes, 'image/png');
+                    this._watcher.setImage(bytes, entry.mimeType ?? 'image/png');
                 this._schedulePaste();
             });
         } else {
@@ -938,8 +934,11 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        // The watcher and store are owned by the Extension class; only the
-        // references are dropped here.
+        // The watcher and store are owned by the Extension class and destroyed
+        // there; only these handlers and the references are dropped here.
+        for (const id of this._watcherIds)
+            this._watcher.disconnect(id);
+        this._watcherIds = [];
         this._watcher = null;
         this._store = null;
         super.destroy();
@@ -954,8 +953,6 @@ export default class ClipboardHistoryExtension extends Extension {
     enable() {
         this._settings = this.getSettings();
 
-        this._reclaimSuperV();
-
         this.watcher = new ClipboardWatcher(this._settings.get_boolean('enable-image-support'));
         this._imageSettingId = this._settings.connect('changed::enable-image-support', () => {
             this.watcher.enableImages = this._settings.get_boolean('enable-image-support');
@@ -968,6 +965,8 @@ export default class ClipboardHistoryExtension extends Extension {
         this._indicator = new ClipboardHistoryIndicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
 
+        // 'toggle-shortcut' ships empty, so this registers no accelerator until
+        // the user sets one; Main.wm.addKeybinding tracks the key from there on.
         Main.wm.addKeybinding(
             'toggle-shortcut',
             this._settings,
@@ -981,54 +980,19 @@ export default class ClipboardHistoryExtension extends Extension {
         Main.wm.removeKeybinding('toggle-shortcut');
 
         this._removePasteTimeouts();
-        this._restoreMessageTray();
 
-        if (this._imageSettingId) {
-            this._settings.disconnect(this._imageSettingId);
-            this._imageSettingId = null;
-        }
+        this._settings.disconnect(this._imageSettingId);
+        this._imageSettingId = null;
 
-        this._indicator?.destroy();
+        this._indicator.destroy();
         this._indicator = null;
 
-        this.watcher?.destroy();
+        this.watcher.destroy();
         this.watcher = null;
 
         this.store = null;
         this._virtualKeyboard = null;
         this._settings = null;
-    }
-
-    // ------------- Reclaiming Super+V from toggle-message-tray -------------
-    //
-    // By default gnome-shell binds both Super+V and Super+M to the message
-    // tray. Super+V is taken away from that binding here, and the original
-    // value is stored in the extension's own schema so that disable() can
-    // restore it exactly.
-
-    _reclaimSuperV() {
-        this._coreKeybindings = new Gio.Settings({schema_id: 'org.gnome.shell.keybindings'});
-
-        const ourShortcut = this._settings.get_strv('toggle-shortcut');
-        const current = this._coreKeybindings.get_strv('toggle-message-tray');
-        const filtered = current.filter(accel => !ourShortcut.includes(accel));
-
-        if (filtered.length === current.length)
-            return; // No conflict, e.g. the user has already rebound it themselves
-
-        if (this._settings.get_strv('saved-message-tray-shortcuts').length === 0)
-            this._settings.set_strv('saved-message-tray-shortcuts', current);
-
-        this._coreKeybindings.set_strv('toggle-message-tray', filtered);
-    }
-
-    _restoreMessageTray() {
-        const saved = this._settings.get_strv('saved-message-tray-shortcuts');
-        if (saved.length > 0 && this._coreKeybindings) {
-            this._coreKeybindings.set_strv('toggle-message-tray', saved);
-            this._settings.set_strv('saved-message-tray-shortcuts', []);
-        }
-        this._coreKeybindings = null;
     }
 
     // ---------- Synthesising Ctrl+V through a virtual input device ----------
@@ -1046,7 +1010,6 @@ export default class ClipboardHistoryExtension extends Extension {
             return GLib.SOURCE_REMOVE;
         });
         this._pasteTimeoutIds.add(id);
-        return id;
     }
 
     _removePasteTimeouts() {
@@ -1063,7 +1026,10 @@ export default class ClipboardHistoryExtension extends Extension {
 
     simulatePaste() {
         if (!this._virtualKeyboard) {
-            const backend = (global.stage.context && global.stage.context.get_backend)
+            // Both branches are live across the supported range: gnome-shell 46
+            // reaches the seat through Clutter.get_default_backend(), and 47+
+            // through global.stage.context.get_backend().
+            const backend = global.stage.context?.get_backend
                 ? global.stage.context.get_backend()
                 : Clutter.get_default_backend();
             const seat = backend.get_default_seat();

@@ -6,20 +6,15 @@
  * Uses the restricted CSS dialect implemented by St, the GNOME Shell styling
  * engine, so only a subset of standard CSS properties is available here. */
 
-/* Fixed width for the whole panel. Without it, a long copied string (up to
- * MAX_PREVIEW_CHARS in extension.js) would stretch the menu to its full
- * length, because nothing else constrains the natural width of the labels
- * and ellipsizing only kicks in once a width limit exists. */
 .clipboard-history-search {
     width: 380px;
     margin: 6px 10px 8px 10px;
 }
 
-/* Maximum height of the scrollable list; past this height a scrollbar
- * appears. The width is pinned here as well so that the whole panel — tabs,
- * search box, list and action buttons — stays a consistent width. It was
- * widened slightly when the Kaomoji and Symbols tabs were added, so that all
- * five tabs fit on one row. */
+/* The pinned width is what makes the panel usable: without it a long copied
+ * string (up to MAX_PREVIEW_CHARS in extension.js) stretches the menu to its
+ * full length, because ellipsizing only kicks in once a width limit exists.
+ * The height caps the list before a scrollbar appears. */
 .clipboard-history-scrollview {
     width: 400px;
     max-height: 420px;
@@ -44,7 +39,7 @@
     background-color: rgba(128, 128, 128, 0.2);
 }
 
-/* The pinned state (toggle_mode + checked) is indicated in yellow. */
+/* Pinned state: the pin is an St.Button with toggle_mode set. */
 .clipboard-history-icon-button:checked {
     color: #f5c211;
 }
@@ -54,8 +49,7 @@
     opacity: 0.6;
 }
 
-/* Tab bar for Text / Images / Emoji / Kaomoji / Symbols. Five tabs have to
- * share one row, so the spacing and font size are a little tighter than
+/* Five tabs share one row, so the spacing and font size are tighter than
  * usual to keep them all within the panel width. */
 .clipboard-history-tabbar {
     spacing: 2px;

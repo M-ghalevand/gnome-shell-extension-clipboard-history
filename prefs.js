@@ -46,7 +46,9 @@ export default class ClipboardHistoryPreferences extends ExtensionPreferences {
         page.add(shortcutGroup);
         shortcutGroup.add(this._buildShortcutRow(
             settings, 'toggle-shortcut',
-            'Toggle clipboard panel', 'Default: Super+V'
+            'Toggle clipboard panel',
+            'No shortcut is set by default. Super+V is the usual choice, but GNOME '
+            + 'assigns it to the message tray, so free it there first.'
         ));
 
         // ---------------- History group ----------------
@@ -88,13 +90,10 @@ export default class ClipboardHistoryPreferences extends ExtensionPreferences {
 
     /** An Adw.ActionRow with a "Change" button that captures a new shortcut.
      *
-     * An earlier version of this method created a standalone Gtk.Window and
-     * called present() on it. Under some hosts of prefs.js — the official
-     * Extensions app in particular — that window was never mapped or never
-     * took focus, so clicking "Change" appeared to do nothing at all.
-     * Instead of creating a window, the key controller is now attached
-     * directly to the existing preferences window (the widget root), which
-     * removes the need for an extra toplevel entirely. */
+     * The key controller is attached to the preferences window itself rather
+     * than to a dedicated capture dialog: under some hosts of prefs.js — the
+     * Extensions app in particular — an extra toplevel is never mapped and
+     * never takes focus, so clicking "Change" appears to do nothing. */
     _buildShortcutRow(settings, key, title, subtitle) {
         const row = new Adw.ActionRow({title, subtitle});
 
@@ -109,11 +108,9 @@ export default class ClipboardHistoryPreferences extends ExtensionPreferences {
                 shortcutLabel.set_label('Not set');
                 return;
             }
-            // Note that Gtk.accelerator_parse returns a three-element array,
-            // [ok, keyval, mods], not [keyval, mods]. Destructuring it as a
-            // pair reads the real keyval where mods is expected, and
-            // Gtk.accelerator_get_label then crashes on an invalid modifier
-            // mask.
+            // Gtk.accelerator_parse returns [ok, keyval, mods], not
+            // [keyval, mods]; destructuring it as a pair passes the keyval
+            // where the modifier mask belongs and crashes accelerator_get_label.
             const [ok, keyval, mods] = Gtk.accelerator_parse(accel);
             if (!ok) {
                 shortcutLabel.set_label(accel);

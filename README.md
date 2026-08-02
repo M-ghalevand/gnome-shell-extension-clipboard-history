@@ -2,7 +2,11 @@
 
 <img src="icon.png" alt="" width="112" align="right">
 
-A GNOME Shell extension that brings a Windows-style clipboard history panel to GNOME. Press **Super+V** to open a searchable list of everything you have copied — text and images alike — then pick an entry and have it pasted straight into the application you were working in.
+A GNOME Shell extension that brings a Windows-style clipboard history panel to GNOME. Open a searchable list of everything you have copied — text and images alike — then pick an entry and have it pasted straight into the application you were working in.
+
+The extension reads the system clipboard whenever its contents change, and keeps that history locally in `~/.cache/clipboard-history@manouchehr/`. Nothing is sent over the network.
+
+**No keyboard shortcut is set by default.** extensions.gnome.org forbids shipping one for clipboard interaction, so assign your own under [Preferences](#preferences). See [The Super+V shortcut](#the-superv-shortcut) if you want the Windows-style binding.
 
 Written against the modern ESM extension API for **GNOME Shell 46–50**, and tested on **Wayland** under **Arch Linux**.
 
@@ -28,8 +32,10 @@ Written against the modern ESM extension API for **GNOME Shell 46–50**, and te
 
 ## Project layout
 
+The repository checks out as `gnome-shell-extension-clipboard-history`, but the *installed* directory must be named after the UUID, `clipboard-history@manouchehr`.
+
 ```
-clipboard-history@manouchehr/
+gnome-shell-extension-clipboard-history/
 ├── extension.js       # Core logic: clipboard monitoring, menu, auto-paste
 ├── prefs.js           # Preferences page: shortcut, history size, image capture
 ├── metadata.json
@@ -43,13 +49,13 @@ The repository also holds `icon.svg`, the source artwork, and `icon.png`, a 256�
 
 ## Installation
 
-The extension directory name must match its UUID exactly: `clipboard-history@manouchehr`.
+The installed directory name must match the UUID exactly: `clipboard-history@manouchehr`.
 
 ### Manual install (recommended for development)
 
 ```bash
-# Copy the extension into the per-user extensions directory
-cp -r clipboard-history@manouchehr ~/.local/share/gnome-shell/extensions/
+# Copy the checkout in under its UUID
+cp -r gnome-shell-extension-clipboard-history ~/.local/share/gnome-shell/extensions/clipboard-history@manouchehr
 
 # Compile the GSettings schema (required for preferences to work)
 glib-compile-schemas ~/.local/share/gnome-shell/extensions/clipboard-history@manouchehr/schemas/
@@ -63,15 +69,14 @@ gnome-extensions enable clipboard-history@manouchehr
 The official tooling produces the distributable bundle to upload to extensions.gnome.org:
 
 ```bash
-cd clipboard-history@manouchehr
-gnome-extensions pack --force
+gnome-extensions pack gnome-shell-extension-clipboard-history --force
 gnome-extensions install --force clipboard-history@manouchehr.shell-extension.zip
 gnome-extensions enable clipboard-history@manouchehr
 ```
 
 `pack` already picks up `stylesheet.css`, `prefs.js` and `schemas/` on its own, so no `--extra-source` flags are needed here.
 
-Note that on GNOME Shell 50 the bundle ships the schema as XML and does **not** contain a compiled `gschemas.compiled`. That is what extensions.gnome.org expects, since it compiles schemas on upload, but it means a locally installed bundle still needs the schema compiled by hand before the preferences will open:
+The bundle ships the schema as XML and does **not** contain a compiled `gschemas.compiled` — `pack` never compiles schemas. That is what extensions.gnome.org expects, since it compiles them on upload, but it means a locally installed bundle still needs the schema compiled by hand before the preferences will open:
 
 ```bash
 glib-compile-schemas ~/.local/share/gnome-shell/extensions/clipboard-history@manouchehr/schemas/
@@ -82,17 +87,13 @@ glib-compile-schemas ~/.local/share/gnome-shell/extensions/clipboard-history@man
 - **X11** — press `Alt+F2`, type `restart`, and press Enter.
 - **Wayland** — GNOME Shell cannot be restarted in place. Log out and back in, or use the nested session described under [Development](#development).
 
-Once enabled, a small clipboard icon appears in the top panel and **Super+V** toggles the history popup.
+Once enabled, a small clipboard icon appears in the top panel and toggles the history popup.
 
 ## The Super+V shortcut
 
-GNOME binds both **Super+V** and **Super+M** to `toggle-message-tray` out of the box. On `enable()`, the extension resolves this automatically:
+No shortcut ships with the extension, and it never modifies keybindings it does not own. To get the Windows-style binding you need two steps, both of them yours to make.
 
-1. It stores the current value of `org.gnome.shell.keybindings toggle-message-tray` in its own schema.
-2. It removes `<Super>v` from that binding, leaving `<Super>m` in place for the message tray.
-3. On `disable()`, the original value is restored exactly as it was.
-
-To make the same change manually, without the extension:
+GNOME binds both **Super+V** and **Super+M** to `toggle-message-tray` out of the box, so first free Super+V:
 
 ```bash
 gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
@@ -100,6 +101,8 @@ gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
 # Revert to the GNOME default
 gsettings reset org.gnome.shell.keybindings toggle-message-tray
 ```
+
+Then open the extension preferences, click **Change** next to *Toggle clipboard panel*, and press Super+V.
 
 ## Preferences
 
@@ -139,7 +142,7 @@ else
 fi
 ```
 
-Enable the extension inside the nested session and try **Super+V**. JavaScript cannot be hot-reloaded, so after editing `extension.js` you need to close the nested window and reopen it.
+Enable the extension inside the nested session and open the panel from its top-bar icon. JavaScript cannot be hot-reloaded, so after editing `extension.js` you need to close the nested window and reopen it.
 
 > The nested instance is not perfectly isolated from the host session, but it is safe and more than adequate for day-to-day development.
 
@@ -169,7 +172,7 @@ Changes to `metadata.json` or the schema require a full logout.
 
 ## Known limitations
 
-- Images are placed on the clipboard as `image/png` only. Most applications — browsers, GIMP, LibreOffice — accept this, but a few expect `text/uri-list` or another format and will not receive the paste.
+- Images are placed back on the clipboard under the single MIME type they were captured as (`image/png`, `image/jpeg`, `image/tiff` or `image/bmp`). Most applications — browsers, GIMP, LibreOffice — accept this, but a few expect `text/uri-list` or another format and will not receive the paste.
 - A 250 ms delay (`PASTE_DELAY_MS` in `extension.js`) precedes the synthetic Ctrl+V. This suits most applications; adjust it if paste events land too early or too late on your system.
 - History and cached images are stored in `~/.cache/clipboard-history@manouchehr/` and persist across enable/disable and logout. Pinned entries are kept indefinitely; the rest are trimmed to the configured maximum.
 
