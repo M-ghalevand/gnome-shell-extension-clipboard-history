@@ -191,6 +191,22 @@ function makePreviewText(text) {
     return preview;
 }
 
+/** The single logging call site for the extension. Only failures the user
+ * may need to act on are reported here; recoverable conditions, such as a
+ * cached image the user has since deleted, are handled without logging. */
+function reportError(message, error) {
+    console.error(`Clipboard History: ${message}: ${error.message}`);
+}
+
+/** True for the error an async operation raises when the store's cancellable
+ * is cancelled during teardown, which is expected rather than a failure. The
+ * instanceof guard matters because some of the try blocks below also cover
+ * non-GLib calls, whose errors have no matches() method. */
+function isCancelled(error) {
+    return error instanceof GLib.Error &&
+        error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+}
+
 let _idCounter = 0;
 function nextId() {
     _idCounter += 1;
@@ -307,6 +323,10 @@ class HistoryStore {
         this._cacheDir = GLib.build_filenamev([GLib.get_user_cache_dir(), uuid]);
         this._imagesDir = GLib.build_filenamev([this._cacheDir, 'images']);
         this._indexPath = GLib.build_filenamev([this._cacheDir, 'history.json']);
+        // Shared by every async operation the store starts, and by the pixbuf
+        // decode the indicator runs on bytes headed for this store. A fresh
+        // store — and so a fresh cancellable — is built on every enable().
+        this.cancellable = new Gio.Cancellable();
         this._ensureDirs();
     }
 
@@ -317,18 +337,20 @@ class HistoryStore {
             Gio.File.new_for_path(this._imagesDir).make_directory_with_parents(null);
         } catch (e) {
             if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS))
-                console.error(`Clipboard History: could not create ${this._imagesDir}: ${e.message}`);
+                reportError(`could not create ${this._imagesDir}`, e);
         }
     }
 
     loadIndexAsync(callback) {
         const file = Gio.File.new_for_path(this._indexPath);
-        file.load_contents_async(null, (source, res) => {
+        file.load_contents_async(this.cancellable, (source, res) => {
             try {
                 const [, contents] = source.load_contents_finish(res);
                 const entries = JSON.parse(new TextDecoder().decode(contents));
                 callback(Array.isArray(entries) ? entries : []);
-            } catch {
+            } catch (e) {
+                if (isCancelled(e))
+                    return;
                 callback([]); // First run, or a missing or corrupt file
             }
         });
@@ -339,11 +361,13 @@ class HistoryStore {
         const json = JSON.stringify(entries);
         const bytes = new GLib.Bytes(new TextEncoder().encode(json));
         file.replace_contents_bytes_async(bytes, null, false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION, null, (source, res) => {
+            Gio.FileCreateFlags.REPLACE_DESTINATION, this.cancellable, (source, res) => {
                 try {
                     source.replace_contents_finish(res);
                 } catch (e) {
-                    console.error(`Clipboard History: could not save the history: ${e.message}`);
+                    if (isCancelled(e))
+                        return;
+                    reportError('could not save the history', e);
                 }
             });
     }
@@ -352,12 +376,14 @@ class HistoryStore {
         const path = GLib.build_filenamev([this._imagesDir, `${id}.png`]);
         const file = Gio.File.new_for_path(path);
         file.replace_contents_bytes_async(bytes, null, false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION, null, (source, res) => {
+            Gio.FileCreateFlags.REPLACE_DESTINATION, this.cancellable, (source, res) => {
                 try {
                     source.replace_contents_finish(res);
                     callback(path);
                 } catch (e) {
-                    console.error(`Clipboard History: could not save the image: ${e.message}`);
+                    if (isCancelled(e))
+                        return;
+                    reportError('could not save the image', e);
                     callback(null);
                 }
             });
@@ -365,12 +391,16 @@ class HistoryStore {
 
     readImageBytes(entry, callback) {
         const file = Gio.File.new_for_path(entry.imagePath);
-        file.load_bytes_async(null, (source, res) => {
+        file.load_bytes_async(this.cancellable, (source, res) => {
             try {
                 const [bytes] = source.load_bytes_finish(res);
                 callback(bytes);
             } catch (e) {
-                console.error(`Clipboard History: could not read ${entry.imagePath}: ${e.message}`);
+                if (isCancelled(e))
+                    return;
+                // A cached image can be absent for ordinary reasons — the user
+                // emptying ~/.cache by hand, for one — so the caller recovers
+                // from a null result rather than this being reported.
                 callback(null);
             }
         });
@@ -378,14 +408,20 @@ class HistoryStore {
 
     deleteImageAsync(id) {
         const path = GLib.build_filenamev([this._imagesDir, `${id}.png`]);
-        Gio.File.new_for_path(path).delete_async(GLib.PRIORITY_DEFAULT, null, (source, res) => {
+        Gio.File.new_for_path(path).delete_async(GLib.PRIORITY_DEFAULT, this.cancellable, (source, res) => {
             try {
                 source.delete_finish(res);
             } catch (e) {
+                if (isCancelled(e))
+                    return;
                 if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
-                    console.error(`Clipboard History: could not delete ${path}: ${e.message}`);
+                    reportError(`could not delete ${path}`, e);
             }
         });
+    }
+
+    destroy() {
+        this.cancellable.cancel();
     }
 }
 
@@ -556,7 +592,7 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
 
         this._updateTabVisibility();
 
-        this.menu.connect('open-state-changed', (menu, isOpen) => {
+        this._menuStateId = this.menu.connect('open-state-changed', (menu, isOpen) => {
             if (isOpen) {
                 this._searchEntry.set_text('');
                 this._applyFilter();
@@ -781,7 +817,7 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
      * as "Image 640×480" can be shown. */
     _readImageDimensions(bytes, id) {
         const stream = Gio.MemoryInputStream.new_from_bytes(bytes);
-        GdkPixbuf.Pixbuf.new_from_stream_async(stream, null, (source, res) => {
+        GdkPixbuf.Pixbuf.new_from_stream_async(stream, this._store.cancellable, (source, res) => {
             try {
                 const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_finish(res);
                 const entry = this._entries.find(e => e.id === id);
@@ -792,9 +828,11 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
                     this._rebuildList();
                 }
             } catch (e) {
+                if (isCancelled(e))
+                    return;
                 // The row keeps its generic caption, but content the clipboard
                 // advertised as an image failing to decode is worth knowing.
-                console.error(`Clipboard History: could not decode the copied image: ${e.message}`);
+                reportError('could not decode the copied image', e);
             }
         });
     }
@@ -939,6 +977,12 @@ class ClipboardHistoryIndicator extends PanelMenu.Button {
         for (const id of this._watcherIds)
             this._watcher.disconnect(id);
         this._watcherIds = [];
+
+        if (this._menuStateId) {
+            this.menu.disconnect(this._menuStateId);
+            this._menuStateId = null;
+        }
+
         this._watcher = null;
         this._store = null;
         super.destroy();
@@ -977,6 +1021,10 @@ export default class ClipboardHistoryExtension extends Extension {
     }
 
     disable() {
+        // First, so that disk and decode callbacks still in flight return
+        // early instead of touching the objects released below.
+        this.store.destroy();
+
         Main.wm.removeKeybinding('toggle-shortcut');
 
         this._removePasteTimeouts();

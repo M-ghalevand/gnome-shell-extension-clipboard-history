@@ -45,7 +45,7 @@ gnome-shell-extension-clipboard-history/
     └── org.gnome.shell.extensions.clipboard-history.gschema.xml
 ```
 
-The repository also holds `icon.svg`, the source artwork, and `icon.png`, a 256×256 render of it for the extensions.gnome.org listing. Neither is part of the installed extension; `gnome-extensions pack` does not pick them up.
+The repository also holds `icon.svg`, the source artwork, and `icon.png`, a 256×256 render of it for the extensions.gnome.org listing. Neither is needed at runtime. `gnome-extensions pack` picks up neither on its own; `icon.svg` is added to the bundle explicitly with `--extra-source`, as is `LICENSE`, while `icon.png` stays out of it.
 
 ## Installation
 
@@ -69,12 +69,14 @@ gnome-extensions enable clipboard-history@manouchehr
 The official tooling produces the distributable bundle to upload to extensions.gnome.org:
 
 ```bash
-gnome-extensions pack gnome-shell-extension-clipboard-history --force
+gnome-extensions pack . --force \
+  --extra-source=icon.svg \
+  --extra-source=LICENSE
 gnome-extensions install --force clipboard-history@manouchehr.shell-extension.zip
 gnome-extensions enable clipboard-history@manouchehr
 ```
 
-`pack` already picks up `stylesheet.css`, `prefs.js` and `schemas/` on its own, so no `--extra-source` flags are needed here.
+`pack` picks up `stylesheet.css`, `prefs.js` and `schemas/` on its own; `icon.svg` and `LICENSE` are not among the files it knows about, hence the two `--extra-source` flags.
 
 The bundle ships the schema as XML and does **not** contain a compiled `gschemas.compiled` — `pack` never compiles schemas. That is what extensions.gnome.org expects, since it compiles them on upload, but it means a locally installed bundle still needs the schema compiled by hand before the preferences will open:
 
